@@ -26,18 +26,36 @@ function generateMap(): Tile[][] {
   }
 
   // Generate terrain with noise-like patterns
-  // Add some forests
-  for (let i = 0; i < 20; i++) {
+  // Add some forests (dead/damaged trees for post-apocalyptic feel)
+  for (let i = 0; i < 25; i++) {
     const cx = Math.floor(Math.random() * MAP_WIDTH);
     const cy = Math.floor(Math.random() * MAP_HEIGHT);
-    const radius = 3 + Math.floor(Math.random() * 5);
+    const radius = 3 + Math.floor(Math.random() * 6);
     for (let dy = -radius; dy <= radius; dy++) {
       for (let dx = -radius; dx <= radius; dx++) {
         const nx = cx + dx;
         const ny = cy + dy;
         if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT) {
-          if (dx * dx + dy * dy < radius * radius * 0.8) {
+          if (dx * dx + dy * dy < radius * radius * 0.8 && Math.random() < 0.7) {
             tiles[ny][nx].terrain = 'forest';
+          }
+        }
+      }
+    }
+  }
+
+  // Add rubble/debris scattered around
+  for (let i = 0; i < 30; i++) {
+    const cx = Math.floor(Math.random() * MAP_WIDTH);
+    const cy = Math.floor(Math.random() * MAP_HEIGHT);
+    const radius = 1 + Math.floor(Math.random() * 3);
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT) {
+          if (Math.random() < 0.5 && tiles[ny][nx].terrain === 'plain') {
+            tiles[ny][nx].terrain = 'rubble';
           }
         }
       }
@@ -208,7 +226,7 @@ export function createGameState(difficulty: 'easy' | 'normal' | 'hard' = 'normal
     gameOver: false,
     winner: null,
     difficulty,
-    camera: { x: 8 * TILE_SIZE, y: 8 * TILE_SIZE, zoom: 1 },
+    camera: { x: (8 - 8) * TILE_SIZE * 0.5, y: (8 + 8) * TILE_SIZE * 0.25, zoom: 1 },
     selection: [],
     selectionBox: null,
     placingBuilding: null,
@@ -1155,6 +1173,22 @@ export function updateGame(state: GameState, dt: number) {
 
   // Update particles
   updateParticles(state, gameDt);
+
+  // Ambient dust particles (post-apocalyptic atmosphere)
+  if (Math.random() < 0.3) {
+    const camCenterX = state.camera.x / (TILE_SIZE * 0.5);
+    const camCenterY = state.camera.y / (TILE_SIZE * 0.25);
+    state.particles.push({
+      x: camCenterX + (Math.random() - 0.5) * 40,
+      y: camCenterY + (Math.random() - 0.5) * 40,
+      vx: 0.3 + Math.random() * 0.5,
+      vy: -0.1 + Math.random() * 0.2,
+      life: 2 + Math.random() * 3,
+      maxLife: 5,
+      color: Math.random() > 0.5 ? '#8a7a5a' : '#6a5a3a',
+      size: 1 + Math.random() * 1.5,
+    });
+  }
 
   // Remove dead units
   state.units = state.units.filter(u => u.state !== 'dead');

@@ -13,6 +13,21 @@ import { setAudioEnabled, isAudioEnabled, playClick } from './game/audio';
 
 type Screen = 'menu' | 'game' | 'research' | 'victory' | 'defeat';
 
+// Convert screen coordinates to world tile coordinates (isometric)
+function screenToWorld(screenX: number, screenY: number, canvasWidth: number, canvasHeight: number, camera: { x: number; y: number; zoom: number }): { x: number; y: number } {
+  // Remove canvas center offset and zoom
+  const isoX = (screenX - canvasWidth / 2) / camera.zoom + camera.x;
+  const isoY = (screenY - canvasHeight / 3) / camera.zoom + camera.y;
+  
+  // Convert iso to tile coordinates
+  const hw = TILE_SIZE * 0.5;
+  const hh = TILE_SIZE * 0.25;
+  const tileX = (isoX / hw + isoY / hh) / 2;
+  const tileY = (isoY / hh - isoX / hw) / 2;
+  
+  return { x: tileX, y: tileY };
+}
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>('menu');
   const [gameState, setGameState] = useState<GameState | null>(null);
@@ -50,29 +65,55 @@ export default function App() {
       const dt = Math.min((timestamp - lastTimeRef.current) / 1000, 0.1);
       lastTimeRef.current = timestamp;
 
-      // Camera movement
+      // Camera movement (isometric-aware)
       const camSpeed = 400 / state.camera.zoom;
-      if (keysRef.current.has('w') || keysRef.current.has('arrowup')) state.camera.y -= camSpeed * dt;
-      if (keysRef.current.has('s') || keysRef.current.has('arrowdown')) state.camera.y += camSpeed * dt;
-      if (keysRef.current.has('a') || keysRef.current.has('arrowleft')) state.camera.x -= camSpeed * dt;
-      if (keysRef.current.has('d') || keysRef.current.has('arrowright')) state.camera.x += camSpeed * dt;
+      if (keysRef.current.has('w') || keysRef.current.has('arrowup')) {
+        state.camera.x -= camSpeed * dt * 0.5;
+        state.camera.y -= camSpeed * dt * 0.5;
+      }
+      if (keysRef.current.has('s') || keysRef.current.has('arrowdown')) {
+        state.camera.x += camSpeed * dt * 0.5;
+        state.camera.y += camSpeed * dt * 0.5;
+      }
+      if (keysRef.current.has('a') || keysRef.current.has('arrowleft')) {
+        state.camera.x -= camSpeed * dt * 0.5;
+        state.camera.y += camSpeed * dt * 0.5;
+      }
+      if (keysRef.current.has('d') || keysRef.current.has('arrowright')) {
+        state.camera.x += camSpeed * dt * 0.5;
+        state.camera.y -= camSpeed * dt * 0.5;
+      }
 
-      // Edge scrolling
+      // Edge scrolling (isometric-aware)
       const canvas = canvasRef.current;
       if (canvas) {
         const rect = canvas.getBoundingClientRect();
         const mx = mouseRef.current.x;
         const my = mouseRef.current.y;
         const edgeSize = 30;
-        if (mx < edgeSize) state.camera.x -= camSpeed * dt * 0.5;
-        if (mx > rect.width - edgeSize) state.camera.x += camSpeed * dt * 0.5;
-        if (my < edgeSize) state.camera.y -= camSpeed * dt * 0.5;
-        if (my > rect.height - edgeSize) state.camera.y += camSpeed * dt * 0.5;
+        if (mx < edgeSize) {
+          state.camera.x -= camSpeed * dt * 0.3;
+          state.camera.y += camSpeed * dt * 0.3;
+        }
+        if (mx > rect.width - edgeSize) {
+          state.camera.x += camSpeed * dt * 0.3;
+          state.camera.y -= camSpeed * dt * 0.3;
+        }
+        if (my < edgeSize) {
+          state.camera.x -= camSpeed * dt * 0.3;
+          state.camera.y -= camSpeed * dt * 0.3;
+        }
+        if (my > rect.height - edgeSize) {
+          state.camera.x += camSpeed * dt * 0.3;
+          state.camera.y += camSpeed * dt * 0.3;
+        }
       }
 
-      // Clamp camera
-      state.camera.x = Math.max(0, Math.min(MAP_WIDTH * TILE_SIZE - canvas!.width / state.camera.zoom, state.camera.x));
-      state.camera.y = Math.max(0, Math.min(MAP_HEIGHT * TILE_SIZE - canvas!.height / state.camera.zoom, state.camera.y));
+      // Clamp camera (isometric bounds)
+      const maxIsoX = MAP_WIDTH * TILE_SIZE * 0.5;
+      const maxIsoY = MAP_HEIGHT * TILE_SIZE * 0.25;
+      state.camera.x = Math.max(-maxIsoX, Math.min(maxIsoX, state.camera.x));
+      state.camera.y = Math.max(-100, Math.min(maxIsoY * 2, state.camera.y));
 
       // Fixed timestep simulation
       lastSimTime += dt;
@@ -194,20 +235,17 @@ export default function App() {
 
       // Update selection box
       if (mouseRef.current.down && mouseRef.current.button === 0) {
-        const worldX1 = (mouseRef.current.startX / state.camera.zoom + state.camera.x) / TILE_SIZE;
-        const worldY1 = (mouseRef.current.startY / state.camera.zoom + state.camera.y) / TILE_SIZE;
-        const worldX2 = (mouseRef.current.x / state.camera.zoom + state.camera.x) / TILE_SIZE;
-        const worldY2 = (mouseRef.current.y / state.camera.zoom + state.camera.y) / TILE_SIZE;
-        state.selectionBox = { x1: worldX1, y1: worldY1, x2: worldX2, y2: worldY2 };
+        const world1 = screenToWorld(mouseRef.current.startX, mouseRef.current.startY, canvas.width, canvas.height, state.camera);
+        const world2 = screenToWorld(mouseRef.current.x, mouseRef.current.y, canvas.width, canvas.height, state.camera);
+        state.selectionBox = { x1: world1.x, y1: world1.y, x2: world2.x, y2: world2.y };
       }
 
       // Update building placement preview
       if (state.placingBuilding) {
-        const worldX = (mouseRef.current.x / state.camera.zoom + state.camera.x) / TILE_SIZE;
-        const worldY = (mouseRef.current.y / state.camera.zoom + state.camera.y) / TILE_SIZE;
-        (state as any)._previewX = Math.floor(worldX);
-        (state as any)._previewY = Math.floor(worldY);
-        (state as any)._canPlace = canPlaceBuilding(state, state.placingBuilding, Math.floor(worldX), Math.floor(worldY), 0);
+        const world = screenToWorld(mouseRef.current.x, mouseRef.current.y, canvas.width, canvas.height, state.camera);
+        (state as any)._previewX = Math.floor(world.x);
+        (state as any)._previewY = Math.floor(world.y);
+        (state as any)._canPlace = canPlaceBuilding(state, state.placingBuilding, Math.floor(world.x), Math.floor(world.y), 0);
       }
     };
 
@@ -227,8 +265,9 @@ export default function App() {
 
       if (e.button === 0) {
         // Left click - start selection or select single unit (or place building)
-        const worldX = (mouseRef.current.x / state.camera.zoom + state.camera.x) / TILE_SIZE;
-        const worldY = (mouseRef.current.y / state.camera.zoom + state.camera.y) / TILE_SIZE;
+        const world = screenToWorld(mouseRef.current.x, mouseRef.current.y, canvas.width, canvas.height, state.camera);
+        const worldX = world.x;
+        const worldY = world.y;
 
         if (state.placingBuilding) {
           // Don't select anything when placing buildings
@@ -278,8 +317,12 @@ export default function App() {
       const state = gameStateRef.current;
       if (!state) { mouseRef.current.down = false; return; }
 
-      const worldX = (mouseRef.current.x / state.camera.zoom + state.camera.x) / TILE_SIZE;
-      const worldY = (mouseRef.current.y / state.camera.zoom + state.camera.y) / TILE_SIZE;
+      const canvas = canvasRef.current;
+      if (!canvas) { mouseRef.current.down = false; return; }
+
+      const world = screenToWorld(mouseRef.current.x, mouseRef.current.y, canvas.width, canvas.height, state.camera);
+      const worldX = world.x;
+      const worldY = world.y;
 
       if (e.button === 0) {
         // Left click release - box selection or building placement
@@ -324,7 +367,7 @@ export default function App() {
             if (unit.state === 'dead' || unit.owner === 0) continue;
             const dx = unit.x - worldX;
             const dy = unit.y - worldY;
-            if (Math.sqrt(dx * dx + dy * dy) < unit.stats.size) {
+            if (Math.sqrt(dx * dx + dy * dy) < unit.stats.size * 1.5) {
               targetEnemy = unit.id;
               break;
             }
@@ -333,8 +376,11 @@ export default function App() {
             for (const building of state.buildings) {
               if (building.state === 'destroyed' || building.owner === 0) continue;
               const stats = BUILDING_STATS[building.type];
-              if (worldX >= building.x && worldX <= building.x + stats.width &&
-                  worldY >= building.y && worldY <= building.y + stats.height) {
+              const bx = building.x + stats.width / 2;
+              const by = building.y + stats.height / 2;
+              const dx = bx - worldX;
+              const dy = by - worldY;
+              if (Math.sqrt(dx * dx + dy * dy) < Math.max(stats.width, stats.height)) {
                 targetEnemy = building.id;
                 break;
               }
@@ -381,8 +427,13 @@ export default function App() {
       const my = (e.clientY - rect.top) / rect.height;
       const state = gameStateRef.current;
       if (!state) return;
-      state.camera.x = mx * MAP_WIDTH * TILE_SIZE - (canvasRef.current?.width || 800) / state.camera.zoom / 2;
-      state.camera.y = my * MAP_HEIGHT * TILE_SIZE - (canvasRef.current?.height || 600) / state.camera.zoom / 2;
+      // Convert minimap click to tile coordinates, then to iso
+      const tileX = mx * MAP_WIDTH;
+      const tileY = my * MAP_HEIGHT;
+      const isoX = (tileX - tileY) * (TILE_SIZE * 0.5);
+      const isoY = (tileX + tileY) * (TILE_SIZE * 0.25);
+      state.camera.x = isoX;
+      state.camera.y = isoY;
     };
 
     window.addEventListener('keydown', handleKeyDown);
