@@ -1271,18 +1271,25 @@ export function renderMinimap(
   const cam = state.camera;
   const hw = TILE_SIZE * 0.5;
   const hh = TILE_SIZE * 0.25;
+  
+  // Convert camera iso position to tile coordinates
+  // isoX = (tileX - tileY) * hw
+  // isoY = (tileX + tileY) * hh
+  // Solving: tileX = (isoX/hw + isoY/hh) / 2, tileY = (isoY/hh - isoX/hw) / 2
   const camTileX = (cam.x / hw + cam.y / hh) / 2;
   const camTileY = (cam.y / hh - cam.x / hw) / 2;
-  const viewW = (window.innerWidth / cam.zoom) / TILE_SIZE * 1.5;
-  const viewH = (window.innerHeight / cam.zoom) / TILE_SIZE * 1.5;
+  
+  // Calculate viewport size in tiles (accounting for zoom)
+  const viewW = (window.innerWidth / cam.zoom) / TILE_SIZE;
+  const viewH = (window.innerHeight / cam.zoom) / TILE_SIZE;
   
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = 1.5;
   ctx.strokeRect(
-    (camTileX - viewW / 2) * scaleX,
-    (camTileY - viewH / 2) * scaleY,
-    viewW * scaleX,
-    viewH * scaleY
+    Math.max(0, (camTileX - viewW / 2)) * scaleX,
+    Math.max(0, (camTileY - viewH / 2)) * scaleY,
+    Math.min(viewW, MAP_WIDTH - camTileX + viewW / 2) * scaleX,
+    Math.min(viewH, MAP_HEIGHT - camTileY + viewH / 2) * scaleY
   );
   
   // Border

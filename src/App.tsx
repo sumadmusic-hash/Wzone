@@ -41,6 +41,7 @@ export default function App() {
   const mouseRef = useRef<{ x: number; y: number; down: boolean; button: number; startX: number; startY: number }>
     ({ x: 0, y: 0, down: false, button: 0, startX: 0, startY: 0 });
   const [, forceUpdate] = useState(0);
+  const lastUIUpdateRef = useRef<number>(0);
 
   const startGame = useCallback((diff: 'easy' | 'normal' | 'hard') => {
     resetAI();
@@ -66,6 +67,8 @@ export default function App() {
       lastTimeRef.current = timestamp;
 
       // Camera movement (isometric-aware)
+      // W=up (toward origin), S=down (away from origin)
+      // A=left, D=right
       const camSpeed = 400 / state.camera.zoom;
       if (keysRef.current.has('w') || keysRef.current.has('arrowup')) {
         state.camera.x -= camSpeed * dt * 0.5;
@@ -140,8 +143,11 @@ export default function App() {
         renderMinimap(mctx, state, 200, 200);
       }
 
-      // Update UI periodically
-      forceUpdate(v => v + 1);
+      // Update UI periodically (every 100ms, not every frame)
+      if (timestamp - lastUIUpdateRef.current > 100) {
+        lastUIUpdateRef.current = timestamp;
+        forceUpdate(v => v + 1);
+      }
 
       animFrameRef.current = requestAnimationFrame(gameLoop);
     };
@@ -332,8 +338,19 @@ export default function App() {
           const tileY = Math.floor(worldY);
           if (canPlaceBuilding(state, state.placingBuilding, tileX, tileY, 0)) {
             placeBuilding(state, state.placingBuilding, tileX, tileY, 0);
+            state.messages.push({ text: `✓ ${BUILDING_STATS[state.placingBuilding].name} construction started`, time: state.time, type: 'info' });
+          } else {
+            // Show error message
+            let errorMsg = '✗ Cannot build here!';
+            if (state.players[0].metal < BUILDING_STATS[state.placingBuilding].cost) {
+              errorMsg = '✗ Not enough metal!';
+            } else if (state.players[0].energy - BUILDING_STATS[state.placingBuilding].powerUsage < -50) {
+              errorMsg = '✗ Not enough power!';
+            }
+            state.messages.push({ text: errorMsg, time: state.time, type: 'warning' });
           }
           state.placingBuilding = null;
+          forceUpdate(v => v + 1);
         } else if (mouseRef.current.down && state.selectionBox) {
           const { x1, y1, x2, y2 } = state.selectionBox;
           const minX = Math.min(x1, x2);
@@ -490,19 +507,35 @@ export default function App() {
 
   const handleSave = () => {
     if (!state) return;
-    const json = saveGame(state);
-    localStorage.setItem('ironhorizon_save', json);
-    state.messages.push({ text: 'Game saved!', time: state.time, type: 'info' });
+    try {
+      const json = saveGame(state);
+      localStorage.setItem('ironhorizon_save', json);
+      state.messages.push({ text: '✓ Game saved successfully!', time: state.time, type: 'info' });
+      forceUpdate(v => v + 1);
+    } catch (error) {
+      state.messages.push({ text: '✗ Failed to save game!', time: state.time, type: 'danger' });
+      forceUpdate(v => v + 1);
+    }
   };
 
   const handleLoad = () => {
     const json = localStorage.getItem('ironhorizon_save');
-    if (!json) return;
-    const loaded = loadGame(json);
-    if (loaded) {
-      gameStateRef.current = loaded;
-      setGameState(loaded);
-      setScreen('game');
+    if (!json) {
+      alert('No saved game found!');
+      return;
+    }
+    try {
+      const loaded = loadGame(json);
+      if (loaded) {
+        gameStateRef.current = loaded;
+        setGameState(loaded);
+        setScreen('game');
+        loaded.messages.push({ text: '✓ Game loaded successfully!', time: loaded.time, type: 'info' });
+      } else {
+        alert('Failed to load save game - incompatible version or corrupted data!');
+      }
+    } catch (error) {
+      alert('Error loading save game!');
     }
   };
 

@@ -269,12 +269,16 @@ export function canPlaceBuilding(state: GameState, type: BuildingType, x: number
       const ty = y + dy;
       if (tx < 0 || tx >= MAP_WIDTH || ty < 0 || ty >= MAP_HEIGHT) return false;
       const tile = state.tiles[ty][tx];
+      // Cannot build on rocks, water, or resources
       if (tile.terrain === 'rock' || tile.terrain === 'water' || tile.terrain === 'resource') return false;
+      // Cannot build on existing buildings
       if (tile.buildingId) return false;
     }
   }
   // Check cost
   if (state.players[owner].metal < stats.cost) return false;
+  // Check energy (only for buildings that consume power)
+  if (stats.powerUsage > 0 && state.players[owner].energy - stats.powerUsage < -50) return false;
   return true;
 }
 
@@ -562,9 +566,22 @@ function updateUnit(state: GameState, unit: Unit, dt: number) {
       unit.angle = Math.atan2(ty - unit.y, tx - unit.x);
 
       if (d > unit.stats.range) {
-        // Move towards target
-        unit.x += (tx - unit.x) / d * speed;
-        unit.y += (ty - unit.y) / d * speed;
+        // Move towards target with collision check
+        const moveX = (tx - unit.x) / d * speed;
+        const moveY = (ty - unit.y) / d * speed;
+        const newX = unit.x + moveX;
+        const newY = unit.y + moveY;
+        
+        // Check if new position is walkable
+        const tileX = Math.floor(newX);
+        const tileY = Math.floor(newY);
+        if (tileX >= 0 && tileX < MAP_WIDTH && tileY >= 0 && tileY < MAP_HEIGHT) {
+          const tile = state.tiles[tileY][tileX];
+          if (tile.terrain !== 'rock' && tile.terrain !== 'water' && !tile.buildingId) {
+            unit.x = newX;
+            unit.y = newY;
+          }
+        }
       } else {
         // Fire at target
         const fireInterval = 1 / unit.stats.fireRate;
@@ -599,20 +616,24 @@ function updateUnit(state: GameState, unit: Unit, dt: number) {
         }
       }
 
-      if (nearestResource) {
-        const d = dist(unit, { x: nearestResource.x + 0.5, y: nearestResource.y + 0.5 });
-        if (d < 1.5) {
-          // Harvest
-          const tile = state.tiles[nearestResource.y][nearestResource.x];
-          if (tile.resourceAmount && tile.resourceAmount > 0) {
-            unit.harvestAmount += 2 * dt;
-            tile.resourceAmount -= 2 * dt;
-            if (unit.harvestAmount >= 50) {
-              unit.state = 'returning';
+        if (nearestResource) {
+          const d = dist(unit, { x: nearestResource.x + 0.5, y: nearestResource.y + 0.5 });
+          if (d < 1.5) {
+            // Harvest
+            const tile = state.tiles[nearestResource.y][nearestResource.x];
+            if (tile.resourceAmount && tile.resourceAmount > 0) {
+              const harvestSpeed = 2 * dt;
+              const actualHarvest = Math.min(harvestSpeed, tile.resourceAmount);
+              unit.harvestAmount += actualHarvest;
+              tile.resourceAmount -= actualHarvest;
+              if (unit.harvestAmount >= 50) {
+                unit.state = 'returning';
+              }
+            } else {
+              // Resource depleted, find new one
+              unit.state = 'idle';
             }
-          }
-        } else {
-          // Move to resource
+          } else {          // Move to resource
           const dx = nearestResource.x + 0.5 - unit.x;
           const dy = nearestResource.y + 0.5 - unit.y;
           unit.x += (dx / d) * speed;
@@ -883,24 +904,25 @@ function updateAI(state: GameState, dt: number) {
   if (aiState.buildTimer <= 0 && aiState.phase === 'build') {
     aiState.buildTimer = 5 / difficultyMult;
 
-    // Build power plant if needed
-    if (!hasPowerPlant && player.metal >= 300) {
+    // Build power plant if needed or if energy is low
+    const needsPower = !hasPowerPlant || player.energy < 20;
+    if (needsPower && player.metal >= 300) {
       tryBuildNear(state, 'power_plant', 1, aiBuildings[0]);
     }
 
-    // Build factory
-    if (!factory && player.metal >= 500 && hasPowerPlant) {
+    // Build factory (only if we have enough energy)
+    if (!factory && player.metal >= 500 && hasPowerPlant && player.energy >= 20) {
       tryBuildNear(state, 'factory', 1, aiBuildings[0]);
     }
 
-    // Build research lab
-    if (!hasResearchLab && player.metal >= 400 && factory) {
+    // Build research lab (only if we have enough energy)
+    if (!hasResearchLab && player.metal >= 400 && factory && player.energy >= 30) {
       tryBuildNear(state, 'research_lab', 1, aiBuildings[0]);
     }
 
-    // Build defense towers
+    // Build defense towers (only if we have enough energy)
     const towerCount = aiBuildings.filter(b => b.type === 'defense_tower').length;
-    if (towerCount < 4 && player.metal >= 200) {
+    if (towerCount < 4 && player.metal >= 200 && player.energy >= 10) {
       tryBuildNear(state, 'defense_tower', 1, aiBuildings[0]);
     }
 
@@ -919,8 +941,8 @@ function updateAI(state: GameState, dt: number) {
       }
     }
 
-    // Produce units
-    if (factory && factory.productionQueue.length < 3 && player.metal >= 200) {
+    // Produce units (only if we have positive energy)
+    if (factory && factory.productionQueue.length < 3 && player.metal >= 200 && player.energy > 0) {
       const unitTypes: UnitType[] = ['scout', 'buggy', 'medium_tank'];
       if (player.researchCompleted.includes('adv1')) unitTypes.push('heavy_tank');
       if (player.researchCompleted.includes('adv2')) unitTypes.push('missile');
@@ -932,9 +954,9 @@ function updateAI(state: GameState, dt: number) {
       }
     }
 
-    // Produce harvester if needed
+    // Produce harvester if needed (only if we have positive energy)
     const harvesters = aiUnits.filter(u => u.type === 'harvester');
-    if (harvesters.length < 2 && factory && player.metal >= 300) {
+    if (harvesters.length < 2 && factory && player.metal >= 300 && player.energy > 0) {
       factory.productionQueue.push({ type: 'harvester', progress: 0 });
       player.metal -= 300;
     }
@@ -1103,6 +1125,9 @@ export function startProduction(state: GameState, buildingId: string, unitType: 
   // Check if unit is unlocked
   if (unitType === 'heavy_tank' && !state.players[building.owner].researchCompleted.includes('adv1')) return false;
   if (unitType === 'missile' && !state.players[building.owner].researchCompleted.includes('adv2')) return false;
+
+  // Limit production queue to 5 units per factory
+  if (building.productionQueue.length >= 5) return false;
 
   state.players[building.owner].metal -= cost;
   building.productionQueue.push({ type: unitType, progress: 0 });
